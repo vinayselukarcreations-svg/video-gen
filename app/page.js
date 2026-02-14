@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Upload, Wand2, X, Film } from 'lucide-react';
+import { Upload, Wand2, X, Film, Download } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,7 @@ export default function Home() {
   const [videoError, setVideoError] = useState('');
   const [videoDragActive, setVideoDragActive] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
+  const [videoRequestId, setVideoRequestId] = useState(null);
 
   // Image handlers
   const handleImageDrag = useCallback((e) => {
@@ -172,6 +173,36 @@ export default function Home() {
     await handleVideoFile(file);
   };
 
+  const pollVideoResult = async (requestId) => {
+    const maxAttempts = 60;
+    const pollInterval = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const response = await fetch(`/api/edit-video?request_id=${requestId}`);
+        const data = await response.json();
+
+        if (response.status === 200) {
+          return data.url;
+        }
+
+        if (response.status === 202) {
+          await new Promise((resolve) => setTimeout(resolve, pollInterval));
+          continue;
+        }
+
+        throw new Error(data.error || 'Failed to get video result');
+      } catch (err) {
+        if (attempt === maxAttempts - 1) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      }
+    }
+
+    throw new Error('Video editing timeout');
+  };
+
   const handleEditVideo = async () => {
     if (!videoUrl || !videoPrompt.trim()) {
       setVideoError('Please upload a video and enter a prompt');
@@ -195,12 +226,16 @@ export default function Home() {
 
       const data = await response.json();
 
-      if (!response.ok) {
+      if (response.status === 202) {
+        if (data.request_id) {
+          setVideoRequestId(data.request_id);
+          const videoUrl = await pollVideoResult(data.request_id);
+          setEditedVideo(videoUrl);
+        } else {
+          throw new Error('No request ID returned');
+        }
+      } else if (!response.ok) {
         throw new Error(data.error || 'Failed to edit video');
-      }
-
-      if (data.url) {
-        setEditedVideo(data.url);
       }
     } catch (err) {
       setVideoError(err.message || 'Failed to edit video');
@@ -215,6 +250,7 @@ export default function Home() {
     setVideoUrl('');
     setVideoPrompt('');
     setVideoError('');
+    setVideoRequestId(null);
   };
 
   return (
@@ -458,11 +494,21 @@ export default function Home() {
                     </div>
                   </div>
                 ) : editedVideo ? (
-                  <video
-                    src={editedVideo}
-                    controls
-                    className="w-full rounded-lg shadow-lg bg-black max-h-96"
-                  />
+                  <div>
+                    <video
+                      src={editedVideo}
+                      controls
+                      className="w-full rounded-lg shadow-lg bg-black max-h-96 mb-4"
+                    />
+                    <a
+                      href={editedVideo}
+                      download
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors font-medium"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download Video
+                    </a>
+                  </div>
                 ) : (
                   <div className="flex items-center justify-center h-64 border-2 border-dashed border-slate-300 rounded-lg">
                     <div className="text-center text-slate-400">
